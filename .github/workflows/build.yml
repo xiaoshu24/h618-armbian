@@ -98,6 +98,26 @@ jobs:
             exit 1
           fi
 
+      - name: 校验 u-boot 配置（DDR3 / eMMC）
+        if: always()
+        run: |
+          echo "--- 查找 u-boot .config ---"
+          CFG=$(find armbian/cache/sources -name ".config" -path "*u-boot*" 2>/dev/null | head -1)
+          if [ -n "$CFG" ]; then
+            echo "配置文件: $CFG"
+            echo "--- 关键项 ---"
+            grep -E "SUNXI_DRAM_H616|CONFIG_DRAM_CLK|CONFIG_MMC_SUNXI_SLOT_EXTRA|SUPPORT_EMMC_BOOT|DEFAULT_DEVICE_TREE|AXP305" "$CFG" || true
+            if grep -q "CONFIG_SUNXI_DRAM_H616_DDR3_1333=y" "$CFG"; then
+              echo "OK: u-boot 使用 DDR3-1333 时序"
+            else
+              echo "::error::u-boot 不是 DDR3 配置，本板会死在 DRAM 初始化"
+            fi
+          else
+            echo "::warning::未找到 u-boot .config（可能已 clean）"
+          fi
+          echo "--- u-boot 二进制 ---"
+          ls -lh armbian/cache/sources/u-boot-worktree/*/u-boot-sunxi-with-spl.bin 2>/dev/null || true
+
       - name: 汇总产物
         if: always()
         run: |
