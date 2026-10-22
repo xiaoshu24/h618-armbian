@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       board:
-        description: 'Armbian 板型名（M0 阶段用 orangepizero3）'
+        description: 'Armbian 板型名'
         required: true
-        default: 'orangepizero3'
+        default: 'h618-d7be'
       branch:
         description: '内核分支 current / edge'
         required: true
@@ -75,6 +75,26 @@ jobs:
             KERNEL_CONFIGURE=no \
             CLEAN_LEVEL="" \
             ARTIFACT_IGNORE_CACHE=yes
+
+      - name: 校验 dtb 是否已编译（仅自定义板型）
+        if: success() && inputs.board == 'h618-d7be'
+        run: |
+          set -e
+          echo "--- debs 目录 ---"
+          ls armbian/output/debs/ | head -30 || true
+          DTBPKG=$(ls armbian/output/debs/linux-dtb-*.deb 2>/dev/null | head -1 || true)
+          if [ -z "$DTBPKG" ]; then
+            echo "::error::没有找到 linux-dtb 包"
+            exit 1
+          fi
+          echo "检查包: $DTBPKG"
+          if dpkg-deb -c "$DTBPKG" | grep -q "sun50i-h618-d7be.dtb"; then
+            echo "OK: sun50i-h618-d7be.dtb 已编译进内核包"
+          else
+            echo "::error::内核包里没有 sun50i-h618-d7be.dtb —— DTS 补丁未被应用"
+            dpkg-deb -c "$DTBPKG" | grep -E "sun50i-h6(16|18)" | head -20 || true
+            exit 1
+          fi
 
       - name: 汇总产物
         if: always()
