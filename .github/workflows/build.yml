@@ -1,0 +1,96 @@
+name: build-armbian-h618
+
+on:
+  workflow_dispatch:
+    inputs:
+      board:
+        description: 'Armbian 板型名（M0 阶段用 orangepizero3）'
+        required: true
+        default: 'orangepizero3'
+      branch:
+        description: '内核分支 current / edge'
+        required: true
+        default: 'current'
+      release:
+        description: '发行版代号'
+        required: true
+        default: 'bookworm'
+      minimal:
+        description: '最小镜像 yes / no（调试期建议 yes）'
+        required: true
+        default: 'yes'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+
+    steps:
+      - name: 释放磁盘空间
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: 报告可用空间
+        run: df -h /
+
+      - name: 取回本仓库（自定义补丁）
+        uses: actions/checkout@v4
+
+      - name: 拉取 Armbian 构建框架
+        run: |
+          git clone --depth 1 https://github.com/armbian/build.git armbian
+          if [ -d userpatches ]; then
+            cp -rT userpatches armbian/userpatches
+            echo "已合入 userpatches："
+            find armbian/userpatches -type f | head -50
+          else
+            echo "本仓库无 userpatches，跳过"
+          fi
+
+      - name: 编译
+        working-directory: armbian
+        run: |
+          ./compile.sh build \
+            BOARD="${{ inputs.board }}" \
+            BRANCH="${{ inputs.branch }}" \
+            RELEASE="${{ inputs.release }}" \
+            BUILD_MINIMAL="${{ inputs.minimal }}" \
+            BUILD_DESKTOP=no \
+            KERNEL_CONFIGURE=no \
+            CLEAN_LEVEL="" \
+            ARTIFACT_IGNORE_CACHE=yes
+
+      - name: 汇总产物
+        if: always()
+        run: |
+          mkdir -p out
+          if [ -d armbian/output/images ]; then
+            cp -v armbian/output/images/* out/ 2>/dev/null || true
+          fi
+          if [ -d armbian/output/debs ]; then
+            mkdir -p out/debs
+            cp -v armbian/output/debs/*.deb out/debs/ 2>/dev/null || true
+          fi
+          echo "--- 产物清单 ---"
+          ls -lh out/ || true
+
+      - name: 保留构建日志
+        if: always()
+        run: |
+          cp -v armbian/output/logs/*.log out/ 2>/dev/null || true
+
+      - name: 上传产物
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: h618-${{ inputs.board }}-${{ inputs.release }}-${{ github.run_number }}
+          path: out/
+          retention-days: 7
+          if-no-files-found: warn
