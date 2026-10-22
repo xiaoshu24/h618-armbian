@@ -40,6 +40,15 @@ jobs:
       - name: 报告可用空间
         run: df -h /
 
+      - name: 注册跨架构模拟（qemu binfmt）
+        run: |
+          docker run --privileged --rm tonistiigi/binfmt --install all
+          echo "--- 已注册的 binfmt ---"
+          ls /proc/sys/fs/binfmt_misc/ || true
+          echo "--- arm64 可用性 ---"
+          sudo apt-get install -y --no-install-recommends arch-test >/dev/null 2>&1 || true
+          arch-test arm64 && echo "arm64 OK" || echo "arm64 仍不可用"
+
       - name: 取回本仓库（自定义补丁）
         uses: actions/checkout@v4
 
