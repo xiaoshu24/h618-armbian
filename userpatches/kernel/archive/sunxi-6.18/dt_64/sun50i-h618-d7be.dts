@@ -2,18 +2,36 @@
 /*
  * Allwinner H618 TV box, board D7BE_H618_V1.2 (2024-01-30)
  *
- * 硬件实测：H618 / 4GB RAM / 128GB eMMC / 千兆网口 / 无无线模块
- *          USB-C 供电 / RJ45 / HDMI / AV / USB-A x2 / TF / 红外
+ * 硬件实测：H618 / 4GB DDR3L / 128GB eMMC / 千兆网口 / 无无线模块
+ *          DC 供电 / RJ45 / HDMI / AV / USB-A x2 / TF / 红外
  *
- * 说明：
- *  - 本板 PMIC 型号未知，故不引用任何 PMIC 节点，全部用 fixed regulator，
- *    避免因 PMIC 不匹配导致 regulator 解析失败而卡住启动。
- *    代价：CPU/GPU 无 DVFS，定频运行。
- *  - 千兆网口走 emac0 + RGMII（与 Orange Pi Zero3 同款方案）。
- *    PHY 型号未知，用通用 ieee802.3-c22 由 phylib 按 ID 自动匹配；
- *    PHY 地址暂按 1（全志参考设计常用值），若不通再试 0。
- *  - 调试串口按全志参考设计为 UART0 (PH0/PH1) 115200 8N1。
- *  - HDMI 依赖 Armbian 补丁 0038~0042 提供的 DE33/TCON/HDMI 支持。
+ * ===== 参数来源 =====
+ * 硬件参数取自同型板（H618 4+128G 千兆 PCDN 盒子）的原厂 DTB
+ * `sun50i-h618-devboard.dtb`（model = "H618 Dev Board"，
+ *  compatible = "allwinner,devboard", "allwinner,sun50i-h618"），
+ * 经 _dtb2dts.py 反编译核对。凡标注「原厂」的数值均出自该文件。
+ *
+ * ===== 三个关键修正（相对早期版本）=====
+ * 1) RGMII pinctrl 不能复用主线的 ext_rgmii_pins
+ *    主线: PI0-PI5, PI7-PI15, PI16   （跳过 PI6，含 PI16）
+ *    原厂: PI0-PI15                    （连续，不含 PI16）
+ *    主线漏掉 PI6 会让 RGMII 少一路信号；把 PI16 配成 emac0 功能
+ *    则与 PHY 复位脚冲突，PHY 永远出不了复位。故自定义 d7be_rgmii_pins。
+ * 2) phy-mode 改为 "rgmii-id"（原厂值）。此前写 "rgmii-rxid" 是抄
+ *    Orange Pi Zero3 的，与本板 PHY 内部延时的用法不同。
+ * 3) PHY 增加复位控制：PI16，低有效，assert 30ms / deassert 150ms（原厂值）。
+ *    没有这条，PHY 可能停在复位态，网口不通。
+ *
+ * ===== 已知取舍 =====
+ * - 本板 PMIC 为 AXP313A（I2C 0x36，原厂 DTB 确认）。这里仍不引用 PMIC 节点，
+ *   全部用 fixed regulator：电压值与原厂 dldo1(3.3V)/aldo1(1.8V) 一致，
+ *   但不走 PMIC 驱动，避免驱动不匹配导致 regulator 解析失败卡启动。
+ *   代价：CPU/GPU 无 DVFS，定频运行。DRAM 电压由 PMIC OTP 上电默认值决定，
+ *   SPL 不参与（已核对 dram_sun50i_h616.c 无任何 pmic 调用）。
+ * - mmc0 用 broken-cd 而非原厂的 cd-gpios(PF6)：启动卡场景下强制认为卡在位，
+ *   比依赖卡检测脚更可靠，代价是不支持热插拔。
+ * - 调试串口 UART0 = PH0/PH1，115200 8N1（原厂 stdout-path 一致）。
+ * - HDMI 依赖 Armbian 补丁 0038~0042 提供的 DE33/TCON/HDMI-PHY 支持。
  */
 
 /dts-v1/;
@@ -58,6 +76,7 @@
 		regulator-always-on;
 	};
 
+	/* 原厂 dldo1 = 3.3V，供 SD/eMMC IO 与 PHY */
 	reg_vcc3v3: regulator-vcc3v3 {
 		compatible = "regulator-fixed";
 		regulator-name = "vcc-3v3";
@@ -67,6 +86,7 @@
 		regulator-always-on;
 	};
 
+	/* 原厂 aldo1 = 1.8V，供 eMMC IO（vqmmc）与 HDMI */
 	reg_vcc1v8: regulator-vcc1v8 {
 		compatible = "regulator-fixed";
 		regulator-name = "vcc-1v8";
@@ -83,6 +103,20 @@
 		regulator-max-microvolt = <5000000>;
 		vin-supply = <&reg_vcc5v>;
 		regulator-always-on;
+	};
+};
+
+/*
+ * 自定义 RGMII 引脚组：PI0-PI15 连续 16 根（原厂定义）。
+ * 注意 PI16 不在此列 —— 它留给下方 PHY 的 reset-gpios。
+ */
+&pio {
+	d7be_rgmii_pins: rgmii-pins {
+		pins = "PI0", "PI1", "PI2", "PI3", "PI4", "PI5",
+		       "PI6", "PI7", "PI8", "PI9", "PI10", "PI11",
+		       "PI12", "PI13", "PI14", "PI15";
+		function = "emac0";
+		drive-strength = <40>;
 	};
 };
 
@@ -107,10 +141,9 @@
 
 &emac0 {
 	pinctrl-names = "default";
-	pinctrl-0 = <&ext_rgmii_pins>;
-	phy-mode = "rgmii-rxid";
+	pinctrl-0 = <&d7be_rgmii_pins>;
+	phy-mode = "rgmii-id";
 	phy-handle = <&ext_rgmii_phy>;
-	allwinner,tx-delay-ps = <700>;
 	phy-supply = <&reg_vcc3v3>;
 	status = "okay";
 };
@@ -119,6 +152,9 @@
 	ext_rgmii_phy: ethernet-phy@1 {
 		compatible = "ethernet-phy-ieee802.3-c22";
 		reg = <1>;
+		reset-gpios = <&pio 8 16 GPIO_ACTIVE_LOW>;
+		reset-assert-us = <30000>;
+		reset-deassert-us = <150000>;
 	};
 };
 
@@ -131,8 +167,10 @@
 
 &mmc2 {
 	vmmc-supply = <&reg_vcc3v3>;
+	vqmmc-supply = <&reg_vcc1v8>;
 	bus-width = <8>;
 	non-removable;
+	cap-mmc-hw-reset;
 	status = "okay";
 };
 
