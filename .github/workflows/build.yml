@@ -90,9 +90,11 @@ jobs:
           echo "检查包: $DTBPKG"
           if dpkg-deb -c "$DTBPKG" | grep -q "sun50i-h618-d7be.dtb"; then
             echo "OK: sun50i-h618-d7be.dtb 已编译进内核包"
+            dpkg-deb -c "$DTBPKG" | grep "sun50i-h618-d7be.dtb"
           else
-            echo "::error::内核包里没有 sun50i-h618-d7be.dtb —— DTS 补丁未被应用"
-            dpkg-deb -c "$DTBPKG" | grep -E "sun50i-h6(16|18)" | head -20 || true
+            echo "::error::内核包里没有 sun50i-h618-d7be.dtb —— DTS 未被编译"
+            echo "--- 包里现有的 h616/h618 dtb ---"
+            dpkg-deb -c "$DTBPKG" | grep -E "allwinner/sun50i-h6(16|18)[^/]*\.dtb" | head -20 || true
             exit 1
           fi
 
